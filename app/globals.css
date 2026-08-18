@@ -24,3 +24,38 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 라벨 용지 규격. lib/config/label.ts (LABEL_WIDTH_MM / LABEL_HEIGHT_MM) 와 항상 같은 값으로 유지할 것. */
+:root {
+  --label-width: 100mm;
+  --label-height: 150mm;
+}
+
+#print-root {
+  display: none;
+}
+
+@media print {
+  body > *:not(#print-root) {
+    display: none !important;
+  }
+
+  #print-root {
+    display: block;
+  }
+
+  @page {
+    size: var(--label-width) var(--label-height);
+    margin: 0;
+  }
+
+  .print-label {
+    width: var(--label-width);
+    height: var(--label-height);
+    box-sizing: border-box;
+    padding: 5mm;
+    page-break-after: always;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #000;
+  }
+}
