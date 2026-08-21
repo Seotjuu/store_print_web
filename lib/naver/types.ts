@@ -19,6 +19,7 @@ export type NaverProductOrder = {
   ordererName?: string;
   trackingNumber?: string;
   deliveryCompanyCode?: string;
+  paymentDate?: string;
 };
 
 export type DispatchTarget = {

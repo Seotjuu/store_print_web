@@ -81,9 +81,9 @@ async function fetchChangedProductOrderIds(sinceMs: number, lastChangedType: str
 }
 
 // 실제 응답 구조를 확인해 normalizeProductOrder()의 필드 매핑을 검증/조정할 때 사용하는 디버그용 함수.
-export async function fetchRawDebugSample(lookbackDays = 2) {
+export async function fetchRawDebugSample(lookbackDays = 2, lastChangedType = "PAYED") {
   const sinceMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
-  const changedIds = await fetchChangedProductOrderIds(sinceMs, "PAYED");
+  const changedIds = await fetchChangedProductOrderIds(sinceMs, lastChangedType);
   const detailsRaw = changedIds.length
     ? await callNaverApi<any>(`/v1/pay-order/seller/product-orders/query`, {
         method: "POST",
@@ -96,7 +96,12 @@ export async function fetchRawDebugSample(lookbackDays = 2) {
 
 function normalizeProductOrder(raw: any): NaverProductOrder | null {
   const productOrder = raw?.productOrder ?? raw;
-  const delivery = raw?.delivery ?? raw?.shippingAddress ?? productOrder?.shippingAddress;
+  // 받는사람 이름/주소는 productOrder.shippingAddress에, 운송장번호/택배사는 별도의
+  // delivery 객체에 들어있다 (발송처리 전에는 delivery가 아예 없다). 두 객체를 혼동해서
+  // 하나로 fallback 체인을 타면, 발송완료 주문에서 delivery가 shippingAddress 자리를
+  // 가로채 이름/주소가 비어버리므로 반드시 분리해서 읽는다.
+  const address = productOrder?.shippingAddress ?? raw?.shippingAddress ?? {};
+  const delivery = raw?.delivery ?? {};
   if (!productOrder?.productOrderId) return null;
 
   return {
@@ -108,16 +113,26 @@ function normalizeProductOrder(raw: any): NaverProductOrder | null {
     productOrderStatus: productOrder.productOrderStatus ?? "",
     placeOrderStatus: productOrder.placeOrderStatus ?? undefined,
     shippingAddress: {
-      name: delivery?.name ?? "",
-      tel1: delivery?.tel1 ?? delivery?.tel ?? undefined,
-      tel2: delivery?.tel2 ?? undefined,
-      baseAddress: delivery?.baseAddress ?? delivery?.address ?? "",
-      detailAddress: delivery?.detailedAddress ?? delivery?.detailAddress ?? "",
+      name: address?.name ?? "",
+      tel1: address?.tel1 ?? address?.tel ?? undefined,
+      tel2: address?.tel2 ?? undefined,
+      baseAddress: address?.baseAddress ?? address?.address ?? "",
+      detailAddress: address?.detailedAddress ?? address?.detailAddress ?? "",
     },
     ordererName: raw?.order?.ordererName ?? undefined,
     trackingNumber: delivery?.trackingNumber ?? undefined,
-    deliveryCompanyCode: delivery?.deliveryCompanyCode ?? undefined,
+    // 실제 응답 필드명은 deliveryCompanyCode가 아니라 deliveryCompany다 (/api/naver-debug로 확인).
+    deliveryCompanyCode: delivery?.deliveryCompany ?? undefined,
+    paymentDate: raw?.order?.paymentDate ?? undefined,
   };
+}
+
+function sortByPaymentDateDescending(orders: NaverProductOrder[]): NaverProductOrder[] {
+  return [...orders].sort((a, b) => {
+    if (!a.paymentDate) return 1;
+    if (!b.paymentDate) return -1;
+    return a.paymentDate < b.paymentDate ? 1 : a.paymentDate > b.paymentDate ? -1 : 0;
+  });
 }
 
 async function fetchProductOrderDetails(productOrderIds: string[]): Promise<NaverProductOrder[]> {
@@ -141,18 +156,22 @@ export async function fetchPayedUnshippedOrders(
   const changedIds = await fetchChangedProductOrderIds(sinceMs, "PAYED");
   const details = await fetchProductOrderDetails(changedIds);
 
-  return details.filter((order) => order.productOrderStatus === "PAYED");
+  return sortByPaymentDateDescending(
+    details.filter((order) => order.productOrderStatus === "PAYED"),
+  );
 }
 
 // 최근 발송처리(운송장 등록) 된 주문 목록. 운송장번호 수정/재출력 화면에서 사용한다.
 export async function fetchDispatchedOrders(
-  lookbackDays = 3
+  lookbackDays = 7
 ): Promise<NaverProductOrder[]> {
   const sinceMs = Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
   const changedIds = await fetchChangedProductOrderIds(sinceMs, "DISPATCHED");
   const details = await fetchProductOrderDetails(changedIds);
 
-  return details.filter((order) => Boolean(order.trackingNumber));
+  return sortByPaymentDateDescending(
+    details.filter((order) => Boolean(order.trackingNumber)),
+  );
 }
 
 // ⚠️ 발주확인 처리 API. 정확한 엔드포인트가 공개 문서에서 확인되지 않아
